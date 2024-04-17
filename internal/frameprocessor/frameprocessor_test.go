@@ -57,10 +57,22 @@ func applyVariance(value uint8, variance int) uint8 {
 	return result
 }
 
-func printColorCode(color color.Color) string {
+func getColorCodeDefinition(color color.Color) string {
 	r, g, b, a := color.RGBA()
 
 	return fmt.Sprintf("color.RGBA{R: %d, G: %d, B: %d, A: %d}", r>>8, g>>8, b>>8, a>>8)
+}
+
+func printImageDefinition(img image.Image) {
+	fmt.Print("Image Definition:\n[][]color.Color{\n")
+	for y := range img.Bounds().Max.Y {
+		fmt.Print("  {\n")
+		for x := range img.Bounds().Max.X {
+			fmt.Print("    ", getColorCodeDefinition(img.At(x, y)), ",\n")
+		}
+		fmt.Print("  },\n")
+	}
+	fmt.Print("}")
 }
 
 var colorRed color.RGBA = color.RGBA{R: 255, G: 0, B: 0, A: 255}
@@ -86,10 +98,11 @@ func TestDetermineHeightPerLine(t *testing.T) {
 					{color.Transparent, colorRed, color.Transparent, color.Transparent, color.Transparent, colorRed, color.Transparent},
 				}, 0),
 				options: ProcessorOptions{
-					LineDirection:    "horizontal",
-					Lasercolor:       colorRed,
-					MinThroughWidth:  3,
-					MinThroughHeight: 1,
+					LineDirection:     "horizontal",
+					Lasercolor:        colorRed,
+					MaxColorDeviation: 10000,
+					MinThroughWidth:   3,
+					MinThroughHeight:  1,
 					CalibrationResults: CalibrationResults{
 						DistanceAt0:  0,
 						DistanceAt10: 10,
@@ -109,15 +122,69 @@ func TestDetermineHeightPerLine(t *testing.T) {
 			name: "basic test with varying colors, increasing distance and 1px laser",
 			args: args{
 				img: convertColorArrayToImage([][]color.Color{
+					{
+						color.RGBA{R: 9, G: 0, B: 3, A: 0},
+						color.RGBA{R: 0, G: 2, B: 9, A: 0},
+						color.RGBA{R: 0, G: 0, B: 9, A: 0},
+						color.RGBA{R: 254, G: 0, B: 0, A: 255},
+						color.RGBA{R: 3, G: 0, B: 7, A: 0},
+						color.RGBA{R: 0, G: 8, B: 6, A: 0},
+						color.RGBA{R: 1, G: 0, B: 0, A: 0},
+					},
+					{
+						color.RGBA{R: 0, G: 0, B: 6, A: 0},
+						color.RGBA{R: 8, G: 9, B: 1, A: 0},
+						color.RGBA{R: 255, G: 0, B: 7, A: 255},
+						color.RGBA{R: 0, G: 0, B: 3, A: 0},
+						color.RGBA{R: 252, G: 9, B: 0, A: 255},
+						color.RGBA{R: 1, G: 0, B: 8, A: 0},
+						color.RGBA{R: 0, G: 0, B: 0, A: 0},
+					},
+					{
+						color.RGBA{R: 0, G: 7, B: 2, A: 0},
+						color.RGBA{R: 255, G: 7, B: 0, A: 255},
+						color.RGBA{R: 0, G: 9, B: 5, A: 0},
+						color.RGBA{R: 2, G: 2, B: 1, A: 0},
+						color.RGBA{R: 0, G: 9, B: 0, A: 0},
+						color.RGBA{R: 254, G: 0, B: 8, A: 255},
+						color.RGBA{R: 9, G: 0, B: 4, A: 0},
+					},
+				}, 0),
+				options: ProcessorOptions{
+					LineDirection:     "horizontal",
+					Lasercolor:        colorRed,
+					MaxColorDeviation: 10000,
+					MinThroughWidth:   3,
+					MinThroughHeight:  1,
+					CalibrationResults: CalibrationResults{
+						DistanceAt0:  0,
+						DistanceAt10: 10,
+						WidthOfLaser: 1,
+						PixelPerMM:   1,
+					},
+				},
+			},
+			want: map[int]float64{
+				0: 0,
+				1: 2,
+				2: 4,
+			},
+			wantErr: false,
+		},
+		{
+			name: "basic test with random varying colors, increasing distance and 1px laser",
+			args: args{
+				img: convertColorArrayToImage([][]color.Color{
 					{color.Transparent, color.Transparent, color.Transparent, colorRed, color.Transparent, color.Transparent, color.Transparent},
 					{color.Transparent, color.Transparent, colorRed, color.Transparent, colorRed, color.Transparent, color.Transparent},
 					{color.Transparent, colorRed, color.Transparent, color.Transparent, color.Transparent, colorRed, color.Transparent},
 				}, 10),
 				options: ProcessorOptions{
-					LineDirection:    "horizontal",
-					Lasercolor:       colorRed,
-					MinThroughWidth:  3,
-					MinThroughHeight: 25,
+					LineDirection:     "horizontal",
+					Lasercolor:        colorRed,
+					MaxColorDeviation: 10000,
+					MinThroughWidth:   3,
+					MinThroughHeight:  25,
 					CalibrationResults: CalibrationResults{
 						DistanceAt0:  0,
 						DistanceAt10: 10,
@@ -142,22 +209,13 @@ func TestDetermineHeightPerLine(t *testing.T) {
 		for _ = range tt.repeat {
 			t.Run(tt.name, func(t *testing.T) {
 				got, err := DetermineHeightPerLine(tt.args.img, tt.args.options)
-				fmt.Print("Using this image:\n[][]color.Color{\n")
-				for y := range tt.args.img.Bounds().Max.Y {
-					fmt.Print("  {\n")
-					for x := range tt.args.img.Bounds().Max.X {
-						fmt.Print("    ", printColorCode(tt.args.img.At(x, y)), ",\n")
-					}
-					fmt.Print("  },\n")
-				}
-				fmt.Print("}")
-
 				if (err != nil) != tt.wantErr {
-
+					printImageDefinition(tt.args.img)
 					t.Errorf("DetermineHeightPerLine() error = %v, wantErr %v", err, tt.wantErr)
 					return
 				}
 				if !reflect.DeepEqual(got, tt.want) {
+					printImageDefinition(tt.args.img)
 					t.Errorf("DetermineHeightPerLine() = %v, want %v", got, tt.want)
 				}
 			})

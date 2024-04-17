@@ -20,7 +20,7 @@ type ProcessorOptions struct {
 	Lasercolor         color.Color
 	MaxColorDeviation  uint16
 	MinThroughWidth    int
-	MinThroughHeight   float64
+	MinThroughHeight   uint16
 	CalibrationResults CalibrationResults
 }
 
@@ -62,17 +62,33 @@ func DetermineHeightPerLine(img image.Image, options ProcessorOptions) (map[int]
 		for x := range img.Bounds().Max.X {
 			pixels = append(pixels, img.At(x, y))
 		}
-		diffToLaserColor := slice.Convert(pixels, func(pixel color.Color) float64 {
+		diffToLaserColor1 := slice.Convert(pixels, func(pixel color.Color) uint16 {
 			r, g, b, _ := pixel.RGBA()
 			laserR, laserG, laserB, _ := options.Lasercolor.RGBA()
 
-			return math.Sqrt(
+			dist := math.Sqrt(
 				math.Pow(math.Abs(float64(r)-float64(laserR)), 2) +
 					math.Pow(math.Abs(float64(g)-float64(laserG)), 2) +
 					math.Pow(math.Abs(float64(b)-float64(laserB)), 2))
+
+			if dist < 0 {
+				dist = 0
+			}
+			if dist > math.MaxUint16 {
+				dist = math.MaxUint16
+			}
+
+			return uint16(dist)
+		})
+		diffToLaserColor2 := slice.Convert(diffToLaserColor1, func(f uint16) uint16 {
+			if f > options.MaxColorDeviation {
+				return math.MaxUint16
+			}
+
+			return f
 		})
 
-		throughs, err := findThroughs(diffToLaserColor, options.MinThroughWidth, options.MinThroughHeight)
+		throughs, err := findThroughs(diffToLaserColor2, options.MinThroughWidth, options.MinThroughHeight)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find throughs: %w", err)
 		}
@@ -95,7 +111,7 @@ func DetermineHeightPerLine(img image.Image, options ProcessorOptions) (map[int]
 			continue
 		}
 
-		return nil, fmt.Errorf("required 1 or 2 throughs but got %d for line %d", len(throughs), y)
+		return nil, fmt.Errorf("required 1 or 2 throughs but got %d for line %d (%v)", len(throughs), y, throughs)
 	}
 
 	return result, nil
@@ -103,7 +119,7 @@ func DetermineHeightPerLine(img image.Image, options ProcessorOptions) (map[int]
 
 // analyzes the array of numbers and returns an array of throughs to find out
 // where the color is closest to the color of the laser
-func findThroughs(numbers []float64, minThroughWidth int, minThroughHeight float64) ([]int, error) {
+func findThroughs(numbers []uint16, minThroughWidth int, minThroughHeight uint16) ([]int, error) {
 	if minThroughWidth%2 != 1 {
 		return nil, fmt.Errorf("the minimum through with needs to be an uneven number")
 	}
@@ -133,16 +149,16 @@ func findThroughs(numbers []float64, minThroughWidth int, minThroughHeight float
 //		     x              x
 //
 // ```
-func isThrough(numbers []float64, middleIndex int, minThroughHeight float64) bool {
+func isThrough(numbers []uint16, middleIndex int, minThroughHeight uint16) bool {
 	centerValue := numbers[middleIndex]
 	leftSideValue := numbers[0]
 	rightSideValue := numbers[len(numbers)-1]
 
 	// if the difference between middle and sides are too low it is not a through
-	if leftSideValue-centerValue < minThroughHeight {
+	if int32(leftSideValue)-int32(centerValue) < int32(minThroughHeight) {
 		return false
 	}
-	if rightSideValue-centerValue < minThroughHeight {
+	if int32(rightSideValue)-int32(centerValue) < int32(minThroughHeight) {
 		return false
 	}
 
