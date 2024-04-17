@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"math"
+	"os"
 
 	"github.com/Neokil/go-ext/pkg/slice"
 )
@@ -22,6 +24,7 @@ type ProcessorOptions struct {
 	MinThroughWidth    int
 	MinThroughHeight   uint16
 	CalibrationResults CalibrationResults
+	Debug              DebugOptions
 }
 
 type CalibrationResults struct {
@@ -29,6 +32,11 @@ type CalibrationResults struct {
 	DistanceAt10 float64 // distance of laser lines 10mm above the plate (the further apart, the better the height-calculation, but the smaller the resolution)
 	WidthOfLaser float64 // thickness of the laser-line
 	PixelPerMM   float64 // how many pixels represent one mm
+}
+
+type DebugOptions struct {
+	Enable    bool
+	Filenames map[string]string
 }
 
 func NewProcessorOptions() ProcessorOptions {
@@ -50,6 +58,46 @@ func (po ProcessorOptions) Validate() error {
 	return nil
 }
 
+func ColorDistanceSimpleEuclidean(color1 color.Color, color2 color.Color) (uint16, error) {
+	r1, g1, b1, _ := color1.RGBA()
+	r2, g2, b2, _ := color2.RGBA()
+
+	dist := math.Sqrt(
+		math.Pow(float64(r1)-float64(r2), 2)+
+			math.Pow(float64(g1)-float64(g2), 2)+
+			math.Pow(float64(b1)-float64(b2), 2)) / 2 // max. value is 113509 so we scale it down to fit into uint16
+
+	if dist < 0 {
+		return 0, fmt.Errorf("dist is < 0 (%f) which should not be possible", dist)
+	}
+	if dist > math.MaxUint16 {
+		if dist > 65601 {
+			return 0, fmt.Errorf("dist is > max (%f) which should not be possible, c1[%d,%d,%d] c1[%d,%d,%d]", dist, r1, g1, b1, r2, g2, b2)
+		}
+		dist = math.MaxUint16
+	}
+
+	return uint16(dist), nil
+}
+
+func ColorDistanceRedman(color1 color.Color, color2 color.Color) (uint16, error) {
+	r1Long, g1Long, b1Long, _ := color1.RGBA()
+	r1 := float64(r1Long >> 8)
+	g1 := float64(g1Long >> 8)
+	b1 := float64(b1Long >> 8)
+	r2Long, g2Long, b2Long, _ := color2.RGBA()
+	r2 := float64(r2Long >> 8)
+	g2 := float64(g2Long >> 8)
+	b2 := float64(b2Long >> 8)
+
+	r := 0.5 * (r1 + r2)
+	dist := math.Sqrt((2+(r/256))*math.Pow(r1-r2, 2) + 4*math.Pow(g1-g2, 2) + (2 + ((255-r)/256)*math.Pow(b1-b2, 2)))
+
+	// max is 674 and we need to scale that up to match uint16s 65535
+
+	return uint16(dist * 65535 / 675), nil
+}
+
 func DetermineHeightPerLine(img image.Image, options ProcessorOptions) (map[int]float64, error) {
 	if err := options.Validate(); err != nil {
 		return nil, fmt.Errorf("failed to validate options")
@@ -57,41 +105,51 @@ func DetermineHeightPerLine(img image.Image, options ProcessorOptions) (map[int]
 
 	result := map[int]float64{}
 
+	debugImage := image.NewRGBA(image.Rect(0, 0, img.Bounds().Max.X, img.Bounds().Max.Y))
+
+	minDiff := uint16(0)
+	maxDiff := uint16(0)
+
 	for y := range img.Bounds().Max.Y {
 		pixels := []color.Color{}
 		for x := range img.Bounds().Max.X {
 			pixels = append(pixels, img.At(x, y))
 		}
-		diffToLaserColor1 := slice.Convert(pixels, func(pixel color.Color) uint16 {
-			r, g, b, _ := pixel.RGBA()
-			laserR, laserG, laserB, _ := options.Lasercolor.RGBA()
-
-			dist := math.Sqrt(
-				math.Pow(math.Abs(float64(r)-float64(laserR)), 2) +
-					math.Pow(math.Abs(float64(g)-float64(laserG)), 2) +
-					math.Pow(math.Abs(float64(b)-float64(laserB)), 2))
-
-			if dist < 0 {
-				dist = 0
-			}
-			if dist > math.MaxUint16 {
-				dist = math.MaxUint16
-			}
-
-			return uint16(dist)
+		diffToLaserColor, err := slice.ConvertWithErr(pixels, func(pixel color.Color) (uint16, error) {
+			return ColorDistanceRedman(pixel, options.Lasercolor)
 		})
-		diffToLaserColor2 := slice.Convert(diffToLaserColor1, func(f uint16) uint16 {
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate diff to laser color for line %d: %w", y, err)
+		}
+
+		for _, diff := range diffToLaserColor {
+			if diff < minDiff {
+				minDiff = diff
+			}
+			if diff > maxDiff {
+				maxDiff = diff
+			}
+		}
+
+		diffToLaserColor = slice.Convert(diffToLaserColor, func(f uint16) uint16 {
 			if f > options.MaxColorDeviation {
 				return math.MaxUint16
 			}
 
 			return f
 		})
+		for x := range len(diffToLaserColor) {
+			debugImage.Set(x, y, color.RGBA{R: uint8(diffToLaserColor[x] >> 8), G: uint8(diffToLaserColor[x] >> 8), B: uint8(diffToLaserColor[x] >> 8), A: 255})
+		}
 
-		throughs, err := findThroughs(diffToLaserColor2, options.MinThroughWidth, options.MinThroughHeight)
+		throughs, err := findThroughs(diffToLaserColor, options.MinThroughWidth, options.MinThroughHeight)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find throughs: %w", err)
 		}
+
+		//for x := range throughs {
+		//	debugImage.Set(x, y, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+		//}
 
 		// what to do with the throughs?
 		// check if there are 1 or two (more should be an error)
@@ -111,7 +169,23 @@ func DetermineHeightPerLine(img image.Image, options ProcessorOptions) (map[int]
 			continue
 		}
 
-		return nil, fmt.Errorf("required 1 or 2 throughs but got %d for line %d (%v)", len(throughs), y, throughs)
+		result[y] = -1
+
+		//return nil, fmt.Errorf("required 1 or 2 throughs but got %d for line %d (%v)", len(throughs), y, throughs)
+	}
+
+	fmt.Printf("MinDiff: %d, MaxDiff: %d\n", minDiff, maxDiff)
+
+	if options.Debug.Enable {
+		os.Remove(options.Debug.Filenames["debugimage"])
+		f, err := os.OpenFile(options.Debug.Filenames["debugimage"], os.O_CREATE|os.O_WRONLY, 0x777)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open debug file: %w", err)
+		}
+		err = jpeg.Encode(f, debugImage, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode debug image: %w", err)
+		}
 	}
 
 	return result, nil
@@ -126,7 +200,7 @@ func findThroughs(numbers []uint16, minThroughWidth int, minThroughHeight uint16
 	halfMinThroughWith := ((minThroughWidth - 1) / 2)
 
 	throughs := []int{}
-	// since we have to compare with number before we start at 1
+	// since we have to compare with numbers before we start at halfMinThroughWith
 	for i := halfMinThroughWith; i < len(numbers)-halfMinThroughWith; i++ {
 		if isThrough(numbers[i-halfMinThroughWith:i+halfMinThroughWith+1], halfMinThroughWith, minThroughHeight) {
 			throughs = append(throughs, i)
@@ -196,7 +270,7 @@ func FrameToImage(frame []byte) (image.Image, error) {
 	return img, err
 }
 
-func GaussianBlur(src *image.RGBA, ksize float64) *image.RGBA {
+func GaussianBlur(src image.Image, ksize float64) image.Image {
 	// kernel of gaussian 15x15
 	ks := int(ksize)
 	k := make([]float64, ks*ks)

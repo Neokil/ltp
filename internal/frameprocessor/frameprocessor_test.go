@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"math/rand"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -78,6 +80,24 @@ func printImageDefinition(img image.Image) {
 var colorRed color.RGBA = color.RGBA{R: 255, G: 0, B: 0, A: 255}
 
 func TestDetermineHeightPerLine(t *testing.T) {
+	exampleImages := []image.Image{}
+	for _, file := range []string{
+		"../../examples/two-lines-1.jpg",
+		"../../examples/two-lines-2.jpg",
+		"../../examples/two-lines-3.jpg",
+	} {
+		f, err := os.Open(file)
+		if err != nil {
+			t.Fatal(fmt.Errorf("failed to open %s: %w", file, err))
+		}
+		img, err := jpeg.Decode(f)
+		if err != nil {
+			t.Fatal(fmt.Errorf("failed to read %s: %w", file, err))
+		}
+
+		exampleImages = append(exampleImages, img)
+	}
+
 	type args struct {
 		img     image.Image
 		options ProcessorOptions
@@ -201,6 +221,99 @@ func TestDetermineHeightPerLine(t *testing.T) {
 			wantErr: false,
 			repeat:  10,
 		},
+		{
+			name: "test with example image 0",
+			args: args{
+				img: exampleImages[0],
+				options: ProcessorOptions{
+					LineDirection:     "horizontal",
+					Lasercolor:        colorRed,
+					MaxColorDeviation: 25000,
+					MinThroughWidth:   3,
+					MinThroughHeight:  25,
+					CalibrationResults: CalibrationResults{
+						DistanceAt0:  0,
+						DistanceAt10: 10,
+						WidthOfLaser: 1,
+						PixelPerMM:   1,
+					},
+					Debug: DebugOptions{
+						Enable: true,
+						Filenames: map[string]string{
+							"debugimage": "debugimage0.jpg",
+						},
+					},
+				},
+			},
+			want: map[int]float64{
+				0: 0,
+				1: 2,
+				2: 4,
+			},
+			wantErr: false,
+		},
+		{
+			name: "test with example image 1",
+			args: args{
+				img: exampleImages[1],
+				options: ProcessorOptions{
+					LineDirection:     "horizontal",
+					Lasercolor:        colorRed,
+					MaxColorDeviation: 25000,
+					MinThroughWidth:   3,
+					MinThroughHeight:  25,
+					CalibrationResults: CalibrationResults{
+						DistanceAt0:  0,
+						DistanceAt10: 10,
+						WidthOfLaser: 1,
+						PixelPerMM:   1,
+					},
+					Debug: DebugOptions{
+						Enable: true,
+						Filenames: map[string]string{
+							"debugimage": "debugimage1.jpg",
+						},
+					},
+				},
+			},
+			want: map[int]float64{
+				0: 0,
+				1: 2,
+				2: 4,
+			},
+			wantErr: false,
+		},
+		{
+			name: "test with example image 2",
+			args: args{
+				img: exampleImages[2],
+				options: ProcessorOptions{
+					LineDirection:     "horizontal",
+					Lasercolor:        colorRed,
+					MaxColorDeviation: 27000,
+					MinThroughWidth:   3,
+					MinThroughHeight:  25,
+					CalibrationResults: CalibrationResults{
+						DistanceAt0:  0,
+						DistanceAt10: 10,
+						WidthOfLaser: 1,
+						PixelPerMM:   1,
+					},
+					Debug: DebugOptions{
+						Enable: true,
+						Filenames: map[string]string{
+							"debugimage": "debugimage2.jpg",
+						},
+					},
+				},
+			},
+			want: map[int]float64{
+				0: 0,
+				1: 2,
+				2: 4,
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		if tt.repeat < 1 {
@@ -210,12 +323,12 @@ func TestDetermineHeightPerLine(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				got, err := DetermineHeightPerLine(tt.args.img, tt.args.options)
 				if (err != nil) != tt.wantErr {
-					printImageDefinition(tt.args.img)
+					//printImageDefinition(tt.args.img)
 					t.Errorf("DetermineHeightPerLine() error = %v, wantErr %v", err, tt.wantErr)
 					return
 				}
 				if !reflect.DeepEqual(got, tt.want) {
-					printImageDefinition(tt.args.img)
+					//printImageDefinition(tt.args.img)
 					t.Errorf("DetermineHeightPerLine() = %v, want %v", got, tt.want)
 				}
 			})
