@@ -1,0 +1,6 @@
+# github.com/AlexEidt/Vidio v1.5.1
+## explicit; go 1.16
+github.com/AlexEidt/Vidio
+# github.com/Neokil/go-ext v0.0.0-20240410092603-e2164daf6842
+## explicit; go 1.22
+github.com/Neokil/go-ext/pkg/slice
